@@ -4,8 +4,6 @@ from datetime import datetime
 import os
 import json
 import uuid
-import io
-import sys
 import gspread
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
@@ -156,7 +154,6 @@ def upload_files_to_drive(creds, config):
         
         # 設定から値を取得
         drive_folder_id = config.get('drive_folder_id')
-        log_folder_name = config.get('log_folder_name', 'log')
         csv_folder_name = config.get('csv_folder_name', 'csv')
         csv_file_path = config.get('csv_file_path')
         
@@ -266,8 +263,8 @@ def read_csv_data(csv_filename):
         logging.error(error_msg)
         return None, None, error_msg
 
-def write_to_google_sheets_and_drive(header, data_rows, config):
-    """Googleスプレッドシートにデータを書き込み、ファイルをDriveにアップロードする"""
+def write_to_google_sheets(header, data_rows, config):
+    """CSVデータをGoogleスプレッドシートに書き込む"""
     try:
         logging.info("Googleスプレッドシートへの書き込みを開始します")
         sheet_details = "Googleスプレッドシートへの書き込みを開始\n"
@@ -284,7 +281,7 @@ def write_to_google_sheets_and_drive(header, data_rows, config):
         if not os.path.exists(creds_file):
             error_msg = f"認証情報ファイル '{creds_file}' が見つかりません"
             logging.error(error_msg)
-            return False, sheet_details, error_msg
+            return False, sheet_details
         
         # 認証情報の読み込み
         creds = Credentials.from_service_account_file(creds_file, scopes=SCOPES)
@@ -318,6 +315,33 @@ def write_to_google_sheets_and_drive(header, data_rows, config):
         logging.info("Googleスプレッドシートへの書き込みが完了しました")
         sheet_details += f"合計 {len(data_rows)} 行のデータを書き込み完了\n"
         
+        return True, sheet_details
+        
+    except FileNotFoundError:
+        error_msg = "認証情報ファイルが見つかりません"
+        logging.error(error_msg)
+        return False, sheet_details
+    except Exception as e:
+        error_msg = f"Googleスプレッドシートへの書き込み中にエラーが発生しました: {str(e)}"
+        logging.error(error_msg)
+        import traceback
+        logging.error(f"詳細なエラー情報: {traceback.format_exc()}")
+        return False, sheet_details
+
+def upload_to_google_drive(config):
+    """Google Driveにファイルをアップロードする"""
+    try:
+        # 設定から値を取得
+        creds_file = config.get('creds_file', 'creds.json')
+        
+        # 認証情報ファイルの確認
+        if not os.path.exists(creds_file):
+            logging.warning(f"認証情報ファイル '{creds_file}' が見つかりません")
+            return False, ""
+        
+        # 認証情報の読み込み
+        creds = Credentials.from_service_account_file(creds_file, scopes=SCOPES)
+        
         # Google Driveにファイルをアップロード
         drive_success, drive_details = upload_files_to_drive(creds, config)
         if drive_success:
@@ -327,20 +351,17 @@ def write_to_google_sheets_and_drive(header, data_rows, config):
             logging.warning("Google Driveへのファイルアップロードに失敗しました")
             drive_details += "Google Driveへのファイルアップロードに失敗\n"
         
-        return drive_success, sheet_details, drive_details
+        return drive_success, drive_details
         
-    except FileNotFoundError:
-        error_msg = "認証情報ファイルが見つかりません"
-        logging.error(error_msg)
-        return False, sheet_details, error_msg
     except Exception as e:
-        error_msg = f"Googleスプレッドシートへの書き込み中にエラーが発生しました: {str(e)}"
-        logging.error(error_msg)
+        error_msg = f"Google Driveへのファイルアップロード中にエラーが発生しました: {str(e)}"
+        logging.warning(error_msg)
         import traceback
-        logging.error(f"詳細なエラー情報: {traceback.format_exc()}")
-        return False, sheet_details, error_msg
+        logging.warning(f"詳細なエラー情報: {traceback.format_exc()}")
+        drive_details = error_msg + "\n" + f"詳細なエラー情報: {traceback.format_exc()}\n"
+        return False, drive_details
 
-def log_to_spreadsheet(config, execution_id, status, message="", row_count="", heading_link=""):
+def log_to_spreadsheet(config, execution_id, status, message="", row_count="", heading_link="", warning=""):
     """実行ログをスプレッドシートに記録する"""
     try:
         # 設定から値を取得
@@ -367,7 +388,7 @@ def log_to_spreadsheet(config, execution_id, status, message="", row_count="", h
             # ログシートが存在しない場合は作成
             log_worksheet = spreadsheet.add_worksheet(title=log_sheet_name, rows=1000, cols=10)
             # ヘッダー行を追加
-            header = ["実行ID", "実行日時", "ステータス", "メッセージ", "CSVファイルパス", "処理行数", "Google Docsリンク"]
+            header = ["実行ID", "実行日時", "ステータス", "メッセージ", "CSVファイルパス", "処理行数", "Google Docsリンク", "警告"]
             log_worksheet.append_row(header)
             logging.info(f"ログシート '{log_sheet_name}' を作成しました")
         
@@ -376,7 +397,7 @@ def log_to_spreadsheet(config, execution_id, status, message="", row_count="", h
         
         # ログデータを準備
         csv_file_path = config.get('csv_file_path', '')
-        log_data = [execution_id, current_time, status, message, csv_file_path, row_count, heading_link]
+        log_data = [execution_id, current_time, status, message, csv_file_path, row_count, heading_link, warning]
         
         # 最終行に追加
         log_worksheet.append_row(log_data)
@@ -570,27 +591,37 @@ def main():
     header, data_rows, csv_details = read_csv_data(csv_filename)
     
     if header and data_rows:
-        # Googleスプレッドシートに書き込み、Driveにファイルをアップロード
-        success, sheet_details, drive_details = write_to_google_sheets_and_drive(header, data_rows, config)
+        # Googleスプレッドシートに書き込み
+        sheet_success, sheet_details = write_to_google_sheets(header, data_rows, config)
         
-        if success:
-            logging.info("すべての処理が正常に完了しました")
-            # 成功ログをGoogle Docsに記録
-            docs_success, heading_link = log_to_google_docs(config, execution_id, "成功", f"CSVデータを正常に処理しました（{len(data_rows)}行）", str(len(data_rows)), csv_details, sheet_details, drive_details)
-            # スプレッドシートにもログを記録
-            log_to_spreadsheet(config, execution_id, "成功", f"CSVデータを正常に処理しました（{len(data_rows)}行）", str(len(data_rows)), heading_link)
+        if sheet_success:
+            # Google Driveにファイルをアップロード
+            drive_success, drive_details = upload_to_google_drive(config)
+            
+            if drive_success:
+                logging.info("すべての処理が正常に完了しました")
+                # 完全成功ログをGoogle Docsに記録
+                docs_success, heading_link = log_to_google_docs(config, execution_id, "成功", f"CSVデータを正常に処理しました（{len(data_rows)}行）", str(len(data_rows)), csv_details, sheet_details, drive_details)
+                # スプレッドシートにもログを記録
+                log_to_spreadsheet(config, execution_id, "成功", f"CSVデータを正常に処理しました（{len(data_rows)}行）", str(len(data_rows)), heading_link, "")
+            else:
+                logging.warning("スプレッドシートへの書き込みは成功、Driveアップロードは失敗しました")
+                # 成功ログをGoogle Docsに記録（警告情報付き）
+                docs_success, heading_link = log_to_google_docs(config, execution_id, "成功", "CSVデータを正常に処理しました（Driveアップロードは失敗）", str(len(data_rows)), csv_details, sheet_details, drive_details)
+                # スプレッドシートにもログを記録（警告情報付き）
+                log_to_spreadsheet(config, execution_id, "成功", "CSVデータを正常に処理しました", str(len(data_rows)), heading_link, "Driveアップロード失敗")
         else:
-            logging.error("Googleスプレッドシートへの書き込みまたはDriveへのアップロードに失敗しました")
+            logging.error("Googleスプレッドシートへの書き込みに失敗しました")
             # エラーログをGoogle Docsに記録
-            docs_success, heading_link = log_to_google_docs(config, execution_id, "エラー", "スプレッドシートへの書き込みまたはDriveへのアップロードに失敗", "", csv_details, sheet_details, drive_details)
+            docs_success, heading_link = log_to_google_docs(config, execution_id, "エラー", "Googleスプレッドシートへの書き込みに失敗", "", csv_details, sheet_details, "")
             # スプレッドシートにもログを記録
-            log_to_spreadsheet(config, execution_id, "エラー", "スプレッドシートへの書き込みまたはDriveへのアップロードに失敗", "", heading_link)
+            log_to_spreadsheet(config, execution_id, "エラー", "Googleスプレッドシートへの書き込みに失敗", "", heading_link, "")
     else:
         logging.error("CSVファイルの読み取りに失敗しました")
         # エラーログをGoogle Docsに記録
         docs_success, heading_link = log_to_google_docs(config, execution_id, "エラー", "CSVファイルの読み取りに失敗", "", csv_details, "", "")
         # スプレッドシートにもログを記録
-        log_to_spreadsheet(config, execution_id, "エラー", "CSVファイルの読み取りに失敗", "", heading_link)
+        log_to_spreadsheet(config, execution_id, "エラー", "CSVファイルの読み取りに失敗", "", heading_link, "")
     
     logging.info(f"処理が完了しました。ログファイル: {log_filename} (実行ID: {execution_id})")
 
