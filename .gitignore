@@ -214,7 +214,6 @@ log/
 # 認証情報ファイル（セキュリティ上の理由）
 creds.json
 service_account_key.json
-*.json
 
 # CSVファイル（必要に応じて）
 # *.csv
