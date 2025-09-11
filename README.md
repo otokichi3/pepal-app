@@ -73,7 +73,7 @@ python main.py
     "csv_file_path": "Z:\\test.csv",
     "creds_file": "creds.json",
     "log_folder_name": "log",
-    "csv_folder_name": "csv"
+    "csv_backup_folder_name": "csv"
 }
 ```
 

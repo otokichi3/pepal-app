@@ -71,13 +71,29 @@ def setup_logging():
     )
     return log_filename
 
-def get_or_create_folder(service, parent_folder_id, folder_name):
-    """指定された親フォルダ内にフォルダを作成または取得する"""
+def find_existing_folder(service, parent_folder_id, folder_name):
+    """指定された親フォルダ内の既存フォルダを検索する（フォルダは存在する前提）"""
     try:
-        # 既存のフォルダを検索
+        logging.info(f"=== 既存フォルダ検索デバッグ ===")
+        logging.info(f"親フォルダID: {parent_folder_id}")
+        logging.info(f"検索するフォルダ名: {folder_name}")
+        
+        # 既存のフォルダを検索（共有ドライブ対応）
         query = f"'{parent_folder_id}' in parents and name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-        results = service.files().list(q=query).execute()
+        logging.info(f"検索クエリ: {query}")
+        
+        # 共有ドライブ対応のため、includeItemsFromAllDrivesとsupportsAllDrivesを追加
+        results = service.files().list(
+            q=query, 
+            fields='files(id,name,mimeType,parents)',
+            includeItemsFromAllDrives=True,
+            supportsAllDrives=True
+        ).execute()
         files = results.get('files', [])
+        logging.info(f"検索結果: {len(files)} 個のフォルダが見つかりました")
+        
+        for i, file in enumerate(files):
+            logging.info(f"見つかったフォルダ {i+1}: ID={file.get('id')}, 名前={file.get('name')}, 親={file.get('parents')}")
         
         if files:
             # 既存のフォルダが見つかった場合
@@ -85,19 +101,14 @@ def get_or_create_folder(service, parent_folder_id, folder_name):
             logging.info(f"既存のフォルダ '{folder_name}' を使用します (ID: {folder_id})")
             return folder_id
         else:
-            # 新しいフォルダを作成
-            folder_metadata = {
-                'name': folder_name,
-                'mimeType': 'application/vnd.google-apps.folder',
-                'parents': [parent_folder_id]
-            }
-            folder = service.files().create(body=folder_metadata, fields='id').execute()
-            folder_id = folder.get('id')
-            logging.info(f"新しいフォルダ '{folder_name}' を作成しました (ID: {folder_id})")
-            return folder_id
+            # フォルダが見つからない場合
+            logging.error(f"指定されたフォルダ '{folder_name}' が見つかりません")
+            return None
             
     except Exception as e:
-        logging.error(f"フォルダの作成/取得中にエラーが発生しました: {str(e)}")
+        logging.error(f"フォルダの検索中にエラーが発生しました: {str(e)}")
+        import traceback
+        logging.error(f"詳細なエラー情報: {traceback.format_exc()}")
         return None
 
 def upload_file_to_drive(service, file_path, folder_id, file_name=None):
@@ -125,12 +136,13 @@ def upload_file_to_drive(service, file_path, folder_id, file_name=None):
             'parents': [folder_id]
         }
         
-        # ファイルのアップロード
+        # ファイルのアップロード（共有ドライブ対応）
         media = MediaFileUpload(file_path, mimetype=mime_type, resumable=True)
         file = service.files().create(
             body=file_metadata,
             media_body=media,
-            fields='id,name'
+            fields='id,name',
+            supportsAllDrives=True
         ).execute()
         
         file_id = file.get('id')
@@ -154,17 +166,21 @@ def upload_files_to_drive(creds, config):
         
         # 設定から値を取得
         drive_folder_id = config.get('drive_folder_id')
-        csv_folder_name = config.get('csv_folder_name', 'csv')
+        csv_folder_name = config.get('csv_backup_folder_name', 'backup')
         csv_file_path = config.get('csv_file_path')
+        
+        logging.info(f"DriveフォルダID: {drive_folder_id}")
+        logging.info(f"CSVフォルダ名: {csv_folder_name}")
+        logging.info(f"CSVファイルパス: {csv_file_path}")
         
         drive_details += f"DriveフォルダID: {drive_folder_id}\n"
         drive_details += f"CSVフォルダ名: {csv_folder_name}\n"
         drive_details += f"CSVファイルパス: {csv_file_path}\n"
         
-        # csvフォルダを取得または作成
-        csv_folder_id = get_or_create_folder(service, drive_folder_id, csv_folder_name)
+        # csvフォルダを検索（既存フォルダが存在する前提）
+        csv_folder_id = find_existing_folder(service, drive_folder_id, csv_folder_name)
         if not csv_folder_id:
-            error_msg = "csvフォルダの作成に失敗しました"
+            error_msg = f"指定されたフォルダ '{csv_folder_name}' が見つかりません"
             logging.warning(error_msg)
             drive_details += error_msg + "\n"
             return False, drive_details

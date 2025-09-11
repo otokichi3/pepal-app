@@ -1,10 +1,10 @@
 {
-    "spreadsheet_id": "1KDEaN6_9r4UslrBKm42mso02sHXa_6c46E1l5-d5hZM",
-    "sheet_name": "sheet1",
-    "log_sheet_name": "実行履歴",
-    "log_doc_id": "1fyTx5NBAACS1i29-zKoEiEF1QKymYAO2imsiOWqWiu0",
-    "drive_folder_id": "1p03-tKNaZnLCANbXKFe1hJPmr4C1AGp8",
+    "spreadsheet_id": "1jGiQsShKnO4XpLPYUw78tpK9AWQv5Bj6i-2bICVYkEk",
+    "sheet_name": "main",
+    "log_sheet_name": "history",
+    "log_doc_id": "1xSShb_StBR1-wvcL-teAyreKi8YrQYjbCHHYUsDI2DE",
+    "drive_folder_id": "1JknliPtH4gY3ZQC9ZKzPcwC7A_IfWbJ1",
     "csv_file_path": "Z:\\test.csv",
     "creds_file": "creds.json",
-    "csv_folder_name": "csv"
+    "csv_backup_folder_name": "backup"
 }
